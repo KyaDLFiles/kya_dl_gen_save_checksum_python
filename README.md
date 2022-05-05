@@ -6,7 +6,7 @@ Currently only supports the final NTSC and PAL builds of the game, as well as th
 The [May 12 prototype](https://hiddenpalace.org/Kya:\_Dark\_Lineage\_\(May\_12,\_2003\_prototype\)) uses a slightly different format which the program currently doesn't support
 
 # Usage
-Requires Python 3  
+Requires Python 3 (3.4.4 - the latest that runs on XP - tested and working)  
 gensavecsum.py /path/to/save/file.dat <--verbose>  
 The checksums stored in the file will be fixed  
 --verbose makes the program print the calculated checksums and data block sizes  
