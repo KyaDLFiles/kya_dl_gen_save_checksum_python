@@ -53,19 +53,17 @@ CRC32_TABLE = [0x00000000, 0x77073096, 0xee0e612c, 0x990951ba, 0x076dc419, 0x706
 
 def compute_checksum(buf):
     size = len(buf)
-    v4 = size - 1
+    remaining = (size & INT32_MAX) - 1
     result = 0xFFFFFFFFFFFFFFFF
 
     if size > 0:
         while True:
-            v5 = buf[0]
-            v6 = v4
-            v4 = (v4 & INT32_MAX) - 1
-            buf = buf[1:]
             # (var & *INTXX_MAX) simulates a cast (truncation of upper bytes)
-            result = ((result & UINT32_MAX) >> 8) ^ (CRC32_TABLE[(result ^ v5) & UINT8_MAX])
-            if v6 == 0:
+            result = ((result & UINT32_MAX) >> 8) ^ (CRC32_TABLE[(result ^ buf[0]) & UINT8_MAX])
+            if remaining == 0:
                 break
+            buf = buf[1:]
+            remaining -= 1
     return result
 
 
