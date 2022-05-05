@@ -74,7 +74,8 @@ def fix_checksum(fp, verbose=False):
 
     # Check if NEDE is present at the start of the file
     if fp.read(0x04) != b'\x4e\x45\x44\x45':
-        sys.stderr.write("File isn't a KDL save file, aborting!\n")
+        sys.stderr.write("File isn't a KDL save file\n"
+                         "Aborting!\n")
         return 3
 
     # Read header size
@@ -96,8 +97,8 @@ def fix_checksum(fp, verbose=False):
 
     # Exit if file is smaller than data blocks
     if len(data1 + data2) < data1_size + data2_size:
-        sys.stderr.write("Incorrect data block size(s) in header!\n"
-                         "Save file may be damaged\n")
+        sys.stderr.write("Incorrect data block size(s) in header! Save file may be damaged\n"
+                         "Aborting!\n")
         return 4
 
     # Compute checksums of data blocks
@@ -149,7 +150,7 @@ def _main():
                 return 5
     try:
         with open(sys.argv[1], "rb+") as fp:
-            fix_checksum(fp, verbose)
+            return fix_checksum(fp, verbose)
     except EnvironmentError as e:
         sys.stderr.write("Error opening file!\n" + str(e) + "\n")
         return 1
