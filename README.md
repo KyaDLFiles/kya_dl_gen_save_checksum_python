@@ -1,5 +1,5 @@
 # kya_dl_gen_save_checksum_python
-Port of the [original written in C](https://github.com/KyaDLFiles/kya\_dl\_gen_save\_checksum)
+Port of the [original written in C](https://github.com/KyaDLFiles/kya\_dl\_gen_save\_checksum)  
 Fixes the checksums inside Kya: Dark Lineage save files (and possibly other Eden Games games that uses the same libraries?) so that the game accepts them as valid
 ## Notice
 Currently only supports the final NTSC and PAL builds of the game, as well as the [September 29 prototype](https://hiddenpalace.org/Kya:\_Dark\_Lineage\_\(Sep_29,\_2003\_prototype\))  
