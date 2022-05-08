@@ -5,7 +5,7 @@ Also supports the [May 12 prototype](https://hiddenpalace.org/Kya:_Dark_Lineage_
 
 # Usage
 Requires Python 3.4 (3.4.4 - the latest that runs on XP - tested and working)  
-gensavecsum.py /path/to/save/file.dat <--verbose> <--game_ver=\[game version\]>
+`gensavecsum.py /path/to/save/file.dat <--verbose> <--game_ver=\[game version\]>`  
 The checksums stored in the file will be fixed  
 `--verbose` makes the program print the calculated checksums and data block sizes  
 `--game_ver` can be:
