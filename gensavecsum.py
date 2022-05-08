@@ -1,8 +1,15 @@
 # encoding=utf-8
+import os
 import struct
 import sys
+import enum
+
 
 # "Constants"
+class GAME_VER(enum.Enum):
+    FINAL = 1
+    MAY12 = 2
+MAX_BLOCKS = 4
 UINT32_MAX = 0xFFFFFFFF
 UINT8_MAX = 0xFF
 INT32_MAX = 0x7FFFFFFFF
@@ -67,10 +74,11 @@ def compute_checksum(buf):
     return result
 
 
-def fix_checksum(fp, verbose=False):
-    data1_csum = 0
-    data2_csum = 0
-    # header_csum not initialized since if that's 0 we have bigger problems
+def fix_checksum(fp, verbose=False, game_ver=GAME_VER.FINAL):
+    # Elements at index 0 refer to the header
+    csums = [0] * (MAX_BLOCKS + 1)
+    sizes = [0] * (MAX_BLOCKS + 1)
+    blocks = [b''] * (MAX_BLOCKS + 1)
 
     # Check if NEDE is present at the start of the file
     if fp.read(0x04) != b'\x4e\x45\x44\x45':
@@ -79,78 +87,128 @@ def fix_checksum(fp, verbose=False):
         return 3
 
     # Read header size
-    fp.seek(0x08, 0)
-    header_size = struct.unpack("<I", fp.read(4))[0]
+    fp.seek(0x08, os.SEEK_SET)
+    sizes[0] = struct.unpack("<I", fp.read(4))[0]
 
-    # Read first data block size
-    fp.seek(4, 1)
-    data1_size = struct.unpack("<I", fp.read(4))[0]
+    if game_ver == GAME_VER.FINAL:
+        # Read first data block size
+        fp.seek(4, os.SEEK_CUR)
+        sizes[1] = struct.unpack("<I", fp.read(4))[0]
 
-    # Read second data block size
-    fp.seek(4, 1)
-    data2_size = struct.unpack("<I", fp.read(4))[0]
+        # Read second data block size
+        fp.seek(4, os.SEEK_CUR)
+        sizes[2] = struct.unpack("<I", fp.read(4))[0]
 
-    # Read both data blocks
-    fp.seek(header_size, 0)
-    data1 = fp.read(data1_size)
-    data2 = fp.read(data2_size)
+        # Exit if file is smaller than reported sizes
+        fp.seek(0, os.SEEK_END)
+        if fp.tell() < sum(sizes):
+            sys.stderr.write("Incorrect data block size(s) in header! Save file may be damaged\n"
+                             "Aborting!\n")
+            return 4
 
-    # Exit if file is smaller than data blocks
-    if len(data1 + data2) < data1_size + data2_size:
-        sys.stderr.write("Incorrect data block size(s) in header! Save file may be damaged\n"
-                         "Aborting!\n")
-        return 4
+        # Read both data blocks
+        fp.seek(sizes[0], os.SEEK_SET)
+        blocks[1] = fp.read(sizes[1])
+        blocks[2] = fp.read(sizes[2])
 
-    # Compute checksums of data blocks
-    if data1_size > 0:
-        data1_csum = compute_checksum(data1)
-    if data2_size > 0:
-        data2_csum = compute_checksum(data2)
+        # Compute checksums of data blocks
+        if sizes[1] > 0:
+            csums[1] = compute_checksum(blocks[1])
+        if sizes[2] > 0:
+            csums[2] = compute_checksum(blocks[2])
 
-    # Write checksums to file
-    fp.seek(0x0C, 0)
-    fp.write(data1_csum.to_bytes(4, byteorder='little'))
-    fp.seek(4, 1)
-    fp.write(data2_csum.to_bytes(4, byteorder='little'))
-    fp.seek(0x08, 0)
+        # Write checksums to file
+        fp.seek(0x0C, os.SEEK_SET)
+        fp.write(csums[1].to_bytes(4, byteorder='little'))
+        fp.seek(4, os.SEEK_CUR)
+        fp.write(csums[2].to_bytes(4, byteorder='little'))
+    elif game_ver == GAME_VER.MAY12:
+        # Read save file sizes
+        for i in range(MAX_BLOCKS):
+            fp.seek(0x14 + (0x108 * i), os.SEEK_SET)
+            sizes[i + 1] = struct.unpack("<I", fp.read(4))[0]
+
+        # Exit if file is smaller 0x20530
+        fp.seek(0, os.SEEK_END)
+        if fp.tell() < 0x20530:
+            sys.stderr.write("Save file is smaller than expected!\n"
+                             "Aborting!\n")
+            return 4
+
+        # Read save files, compute checksums, and write them
+        fp.seek(sizes[0], os.SEEK_SET)
+        for i in range(MAX_BLOCKS):
+            if sizes[i + 1] == 0:
+                continue
+            fp.seek(0x530 + (0x8000 * i), os.SEEK_SET)
+            blocks[i + 1] = fp.read(sizes[i + 1])
+            csums[i + 1] = compute_checksum(blocks[i + 1])
+            fp.seek(0x10 + (0x108 * i), os.SEEK_SET)
+            fp.write(csums[i + 1].to_bytes(4, byteorder='little'))
 
     # Reread header from 0x08, calculate checksum, and write it to file
-    header_csum = compute_checksum(fp.read(header_size - 0x08))
-    fp.seek(0x04, 0)
-    fp.write(header_csum.to_bytes(4, byteorder='little'))
+    fp.seek(0x08, os.SEEK_SET)
+    blocks[0] = fp.read(sizes[0] - 0x08)
+    csums[0] = compute_checksum(blocks[0])
+    fp.seek(0x04, os.SEEK_SET)
+    fp.write(csums[0].to_bytes(4, byteorder='little'))
 
     if verbose:
         # Tfw no f strings to support legacy OSes
-        print("Header size: h%X\n"
-              "First data block size: h%X\n"
-              "Second data block size: h%X\n\n"
-              "Header checksum: h%08X\n"
-              "First data block checksum: h%08X\n"
-              "Second data block checksum: h%08X\n\n"
-              "Keep in mind they're stored as little endian in the file!"
-              % (header_size, data1_size, data2_size, header_csum, data1_csum, data2_csum))
+        # And yes, I know this code sucks rn... but too lazy to fix
+        if game_ver == GAME_VER.FINAL:
+            print("Header size: h%X\n"
+                  "First data block size: h%X\n"
+                  "Second data block size: h%X\n\n"
+                  "Header checksum: h%08X\n"
+                  "First data block checksum: h%08X\n"
+                  "Second data block checksum: h%08X\n\n"
+                  "Keep in mind they're stored as little endian in the file!"
+                  % (sizes[0], sizes[1], sizes[2], csums[0], csums[1], csums[2]))
+        elif game_ver == GAME_VER.MAY12:
+            print("Header size: h%X\n"
+                  "First save file size: h%X\n"
+                  "Second save file size: h%X\n"
+                  "Third save file size: h%X\n"
+                  "Fourth save file size: h%X\n\n"
+                  "Header checksum: h%08X\n"
+                  "First save file checksum: h%08X\n"
+                  "Second save file checksum: h%08X\n"
+                  "Third save file checksum: h%08X\n"
+                  "Fourth save file checksum: h%08X\n\n"
+                  "Keep in mind they're stored as little endian in the file!"
+                  % (sizes[0], sizes[1], sizes[2], sizes[3], sizes[4], csums[0], csums[1], csums[2], csums[3], csums[4]))
 
 
 def _main():
-    # Initialize variables
+    # Initialize variables and defaults
     argc = len(sys.argv)
     verbose = False
+    game_ver = GAME_VER.FINAL
 
     # Read and check arguments
     if argc < 2:
         sys.stderr.write("Missing argument!\n"
-                         "Usage: gensavecsum.py /path/to/save/file.dat <--verbose>\n")
+                         "Usage: gensavecsum.py /path/to/save/file.dat <--verbose> <--game_ver=[game version]>\n"
+                         "Game versions:\n"
+                         "- final (also applies to September 29 prototype) (default)\n"
+                         "- may12\n\n")
         return 2
     elif argc > 2:
         for i in sys.argv[2:]:
+            i = i.lower()
             if i == "--verbose":
                 verbose = True
+            elif i[:11] == "--game_ver=" and i[11:] == "may12":
+                game_ver = GAME_VER.MAY12
+            elif i[:11] == "--game_ver=" and i[11:] == "final":
+                game_ver = GAME_VER.FINAL
             else:
                 sys.stderr.write("Unknown argument(s)!\n")
                 return 5
     try:
         with open(sys.argv[1], "rb+") as fp:
-            return fix_checksum(fp, verbose)
+            return fix_checksum(fp, verbose, game_ver)
     except EnvironmentError as e:
         sys.stderr.write("Error opening file!\n" + str(e) + "\n")
         return 1
