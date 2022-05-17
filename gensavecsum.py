@@ -9,11 +9,17 @@ import enum
 class GAME_VER(enum.Enum):
     FINAL = 1
     MAY12 = 2
-MAX_BLOCKS = 4
 UINT64_MAX = 0xFFFFFFFFFFFFFFFF
 UINT32_MAX = 0xFFFFFFFF
 UINT8_MAX = 0xFF
 INT32_MAX = 0x7FFFFFFFF
+ORDINALS = {
+    0: "Header",
+    1: "First data block",
+    2: "Second data block",
+    3: "Third data block",
+    4: "Fourth data block"
+}
 CRC32_TABLE = [0x00000000, 0x77073096, 0xee0e612c, 0x990951ba, 0x076dc419, 0x706af48f,
                0xe963a535, 0x9e6495a3, 0x0edb8832, 0x79dcb8a4, 0xe0d5e91e, 0x97d2d988,
                0x09b64c2b, 0x7eb17cbd, 0xe7b82d07, 0x90bf1d91, 0x1db71064, 0x6ab020f2,
@@ -72,9 +78,8 @@ def compute_checksum(buf):
 
 def fix_checksum(fp, verbose=False, game_ver=GAME_VER.FINAL):
     # Elements at index 0 refer to the header
-    csums = [0] * (MAX_BLOCKS + 1)
-    sizes = [0] * (MAX_BLOCKS + 1)
-    blocks = [b''] * (MAX_BLOCKS + 1)
+    csums = [0]
+    sizes = [0]
 
     # Check if NEDE is present at the start of the file
     if fp.read(0x04) != b'\x4e\x45\x44\x45':
@@ -87,13 +92,10 @@ def fix_checksum(fp, verbose=False, game_ver=GAME_VER.FINAL):
     sizes[0] = struct.unpack("<I", fp.read(4))[0]
 
     if game_ver == GAME_VER.FINAL:
-        # Read first data block size
-        fp.seek(4, os.SEEK_CUR)
-        sizes[1] = struct.unpack("<I", fp.read(4))[0]
-
-        # Read second data block size
-        fp.seek(4, os.SEEK_CUR)
-        sizes[2] = struct.unpack("<I", fp.read(4))[0]
+        # Read data block sizes
+        for i in range(2):
+            fp.seek(0x10 + (0x08 * i), os.SEEK_SET)
+            sizes.append(struct.unpack("<I", fp.read(4))[0])
 
         # Exit if file is smaller than reported sizes
         fp.seek(0, os.SEEK_END)
@@ -102,27 +104,24 @@ def fix_checksum(fp, verbose=False, game_ver=GAME_VER.FINAL):
                              "Aborting!\n")
             return 4
 
-        # Read both data blocks
-        fp.seek(sizes[0], os.SEEK_SET)
-        blocks[1] = fp.read(sizes[1])
-        blocks[2] = fp.read(sizes[2])
+        # Calculate checksums of data blocks
+        fp.seek(0x1C, os.SEEK_SET)
+        for i in range(2):
+            if sizes[i + 1] == 0:
+                csums.append(0)
+            else:
+                csums.append(compute_checksum(fp.read(sizes[i + 1])))
 
-        # Compute checksums of data blocks
-        if sizes[1] > 0:
-            csums[1] = compute_checksum(blocks[1])
-        if sizes[2] > 0:
-            csums[2] = compute_checksum(blocks[2])
+        # Write checksums of data blocks
+        for i in range(2):
+            fp.seek(0x0C + (0x08 * i), os.SEEK_SET)
+            fp.write(csums[i + 1].to_bytes(4, byteorder='little'))
 
-        # Write checksums to file
-        fp.seek(0x0C, os.SEEK_SET)
-        fp.write(csums[1].to_bytes(4, byteorder='little'))
-        fp.seek(4, os.SEEK_CUR)
-        fp.write(csums[2].to_bytes(4, byteorder='little'))
     elif game_ver == GAME_VER.MAY12:
         # Read save file sizes
-        for i in range(MAX_BLOCKS):
+        for i in range(4):
             fp.seek(0x14 + (0x108 * i), os.SEEK_SET)
-            sizes[i + 1] = struct.unpack("<I", fp.read(4))[0]
+            sizes.append(struct.unpack("<I", fp.read(4))[0])
 
         # Exit if file is smaller 0x20530
         fp.seek(0, os.SEEK_END)
@@ -133,47 +132,30 @@ def fix_checksum(fp, verbose=False, game_ver=GAME_VER.FINAL):
 
         # Read save files, compute checksums, and write them
         fp.seek(sizes[0], os.SEEK_SET)
-        for i in range(MAX_BLOCKS):
+        for i in range(4):
             if sizes[i + 1] == 0:
-                continue
-            fp.seek(0x530 + (0x8000 * i), os.SEEK_SET)
-            blocks[i + 1] = fp.read(sizes[i + 1])
-            csums[i + 1] = compute_checksum(fp.read(sizes[i + 1]))
-            fp.seek(0x10 + (0x108 * i), os.SEEK_SET)
-            fp.write(csums[i + 1].to_bytes(4, byteorder='little'))
+                csums.append(0)
+            else:
+                fp.seek(0x530 + (0x8000 * i), os.SEEK_SET)
+                csums.append(compute_checksum(fp.read(sizes[i + 1])))
+                fp.seek(0x10 + (0x108 * i), os.SEEK_SET)
+                fp.write(csums[i + 1].to_bytes(4, byteorder='little'))
 
     # Reread header from 0x08, calculate checksum, and write it to file
     fp.seek(0x08, os.SEEK_SET)
-    blocks[0] = fp.read(sizes[0] - 0x08)
     csums[0] = compute_checksum(fp.read(sizes[0] - 0x08))
     fp.seek(0x04, os.SEEK_SET)
     fp.write(csums[0].to_bytes(4, byteorder='little'))
 
     if verbose:
         # Tfw no f strings to support legacy OSes
-        # And yes, I know this code sucks rn... but too lazy to fix
-        if game_ver == GAME_VER.FINAL:
-            print("Header size: h%X\n"
-                  "First data block size: h%X\n"
-                  "Second data block size: h%X\n\n"
-                  "Header checksum: h%08X\n"
-                  "First data block checksum: h%08X\n"
-                  "Second data block checksum: h%08X\n\n"
-                  "Keep in mind they're stored as little endian in the file!"
-                  % (sizes[0], sizes[1], sizes[2], csums[0], csums[1], csums[2]))
-        elif game_ver == GAME_VER.MAY12:
-            print("Header size: h%X\n"
-                  "First save file size: h%X\n"
-                  "Second save file size: h%X\n"
-                  "Third save file size: h%X\n"
-                  "Fourth save file size: h%X\n\n"
-                  "Header checksum: h%08X\n"
-                  "First save file checksum: h%08X\n"
-                  "Second save file checksum: h%08X\n"
-                  "Third save file checksum: h%08X\n"
-                  "Fourth save file checksum: h%08X\n\n"
-                  "Keep in mind they're stored as little endian in the file!"
-                  % (sizes[0], sizes[1], sizes[2], sizes[3], sizes[4], csums[0], csums[1], csums[2], csums[3], csums[4]))
+        for i in range(len(csums)):
+            print("%s size: h%X" % (ORDINALS[i], sizes[i]))
+        print("")
+        for i in range(len(csums)):
+            print("%s checksum: h%X" % (ORDINALS[i], csums[i]))
+
+        print("\nKeep in mind they're store as little endian in the save files!")
 
 
 def _main():
