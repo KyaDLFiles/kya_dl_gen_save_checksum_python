@@ -10,6 +10,7 @@ class GAME_VER(enum.Enum):
     FINAL = 1
     MAY12 = 2
 MAX_BLOCKS = 4
+UINT64_MAX = 0xFFFFFFFFFFFFFFFF
 UINT32_MAX = 0xFFFFFFFF
 UINT8_MAX = 0xFF
 INT32_MAX = 0x7FFFFFFFF
@@ -60,17 +61,12 @@ CRC32_TABLE = [0x00000000, 0x77073096, 0xee0e612c, 0x990951ba, 0x076dc419, 0x706
 
 def compute_checksum(buf):
     size = len(buf)
-    remaining = (size & INT32_MAX) - 1
-    result = 0xFFFFFFFFFFFFFFFF
+    result = UINT64_MAX if size == 0 else UINT32_MAX
 
-    if size > 0:
-        while True:
-            # (var & *INTXX_MAX) simulates a cast (truncation of upper bytes)
-            result = ((result & UINT32_MAX) >> 8) ^ (CRC32_TABLE[(result ^ buf[0]) & UINT8_MAX])
-            if remaining == 0:
-                break
-            buf = buf[1:]
-            remaining -= 1
+    for i in range(size & INT32_MAX):
+        # int_var & *INTX_MAX simulates a cast (truncation of upper bytes)
+        result = (result >> 8) ^ (CRC32_TABLE[(result ^ buf[i]) & UINT8_MAX])
+
     return result
 
 
@@ -142,14 +138,14 @@ def fix_checksum(fp, verbose=False, game_ver=GAME_VER.FINAL):
                 continue
             fp.seek(0x530 + (0x8000 * i), os.SEEK_SET)
             blocks[i + 1] = fp.read(sizes[i + 1])
-            csums[i + 1] = compute_checksum(blocks[i + 1])
+            csums[i + 1] = compute_checksum(fp.read(sizes[i + 1]))
             fp.seek(0x10 + (0x108 * i), os.SEEK_SET)
             fp.write(csums[i + 1].to_bytes(4, byteorder='little'))
 
     # Reread header from 0x08, calculate checksum, and write it to file
     fp.seek(0x08, os.SEEK_SET)
     blocks[0] = fp.read(sizes[0] - 0x08)
-    csums[0] = compute_checksum(blocks[0])
+    csums[0] = compute_checksum(fp.read(sizes[0] - 0x08))
     fp.seek(0x04, os.SEEK_SET)
     fp.write(csums[0].to_bytes(4, byteorder='little'))
 
